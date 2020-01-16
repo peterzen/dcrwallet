@@ -8,8 +8,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +22,7 @@ import (
 	"decred.org/dcrwallet/internal/rpc/jsonrpc"
 	"decred.org/dcrwallet/internal/rpc/rpcserver"
 	"github.com/decred/dcrwallet/errors/v2"
+	"github.com/improbable-eng/grpc-web/go/grpcweb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -155,13 +158,34 @@ func startRPCServers(walletLoader *loader.Loader) (*grpc.Server, *jsonrpc.Server
 			rpcserver.StartAgendaService(server, activeNet.Params)
 			rpcserver.StartDecodeMessageService(server, activeNet.Params)
 			rpcserver.StartMessageVerificationService(server, activeNet.Params)
+
+			log.Infof("wrapping grpc server")
+			wrappedServer := grpcweb.WrapServer(server)
+			handler := func(resp http.ResponseWriter, req *http.Request) {
+				wrappedServer.ServeHTTP(resp, req)
+			}
+
+			httpServer := http.Server{
+				Addr:    fmt.Sprintf("0.0.0.0:%d", 9999),
+				Handler: http.HandlerFunc(handler),
+			}
+
+			// certFile:=cfg.RPCCert.Value
+			// keyFile:=cfg.RPCKey.Value
+
+			// if err := httpServer.ListenAndServeTLS(certFile, keyFile); err != nil {
+			// 	log.Errorf("failed starting http2 server: %v", err)
+			// }
+			// log.Infof("end wrap")
+
+
 			for _, lis := range listeners {
 				lis := lis
 				go func() {
 					laddr := lis.Addr().String()
 					grpcAddrNotifier.notify(laddr)
 					log.Infof("gRPC server listening on %s", laddr)
-					err := server.Serve(lis)
+					err := httpServer.Serve(lis)
 					log.Tracef("Finished serving gRPC: %v", err)
 				}()
 			}
